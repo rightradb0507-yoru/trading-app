@@ -1,125 +1,116 @@
 import streamlit as st
 import pandas as pd
 import datetime
-import plotly.express as px
-from PIL import Image
-# import pytesseract # 若需啟用 OCR 自動辨識股號，需解除註解並安裝 Tesseract 引擎
 
 # 頁面基本設定
-st.set_page_config(page_title="波段交易紀錄系統", layout="wide")
-st.title("📈 波段交易與部位控管系統")
+st.set_page_config(page_title="實戰波段部位控管系統", layout="wide")
+st.title("📈 實戰波段部位即時控管儀表板")
 
-# 初始化暫存資料 (實戰中需改為連接 SQLite 或 CSV 以持久化儲存)
-if 'trade_history' not in st.session_state:
-    st.session_state.trade_history = pd.DataFrame(columns=['日期', '股號', '類型', '損益金額'])
+# 建立左右兩大區塊：左邊輸入，右邊看即時結果
+col_input, col_dashboard = st.columns([1, 1.2])
 
-col1, col2 = st.columns([1, 1.2])
-
-with col1:
-    st.header("新增交易紀錄")
+with col_input:
+    st.header("1. 部位即時編輯區")
     
-    # 3. 紀錄日期
-    trade_date = st.date_input("📝 紀錄日期", datetime.date.today())
-    
-    # 1. 圖片上傳 (現代瀏覽器支援點擊此處後直接 Ctrl+V 貼上截圖)
-    uploaded_file = st.file_uploader("📸 貼上或上傳進場位置截圖 (支援 Ctrl+V)", type=['png', 'jpg', 'jpeg'])
-    
-    # 2. 自動 OCR 股號 (這裡建立欄位，並預留 OCR 邏輯)
-    stock_id = ""
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        st.image(image, caption="進場截圖", use_column_width=True)
-        # OCR 辨識邏輯預留區：
-        # stock_id = pytesseract.image_to_string(image, lang='eng').strip() 
-        # 實戰中需針對券商軟體截圖區域做精準裁切辨識
-        stock_id = "自動辨識結果 (範例: 2330)" 
-        
-    stock_input = st.text_input("🏷️ 股號", value=stock_id)
+    # 紀錄日期與股號 (方便截圖或紀錄)
+    c1, c2 = st.columns(2)
+    with c1:
+        trade_date = st.date_input("📝 紀錄日期", datetime.date.today())
+    with c2:
+        stock_input = st.text_input("🏷️ 股號", placeholder="例如: 2330")
 
     st.markdown("---")
-    # 4. 母倉設定與自動計算停損
-    st.subheader("🔹 母倉設定")
-    init_price = st.number_input("母倉進場價格", min_value=0.0, step=0.1)
-    init_shares = st.number_input("母倉股數", min_value=0, step=1000)
     
-    total_cost = init_price * init_shares
-    total_shares = init_shares
-
+    # ================= 母單設定 =================
+    st.subheader("🔹 母單設定")
+    init_price = st.number_input("母單進場價格", min_value=0.0, step=0.5, format="%.2f")
+    init_shares = st.number_input("母單股數", min_value=0, step=1000)
+    
+    # 計算初始停損價 (母單的 -20%)
     if init_price > 0:
-        sl_price = init_price * 0.8
-        # 使用紅色凸顯停損價
-        st.markdown(f"### 🚨 應設停損價 (-20%): :red[{sl_price:.2f}]")
+        initial_sl_price = init_price * 0.8
+        st.markdown(f"🚨 **母單原始停損防線 (-20%):** :red[{initial_sl_price:.2f}]")
 
     st.markdown("---")
-    # 5-1 & 5-2. 動態加碼欄位
-    st.subheader("🔸 加碼設定 (最多 4 次)")
+    
+    # ================= 加碼單設定 =================
+    st.subheader("🔸 加碼單動態設定")
+    st.caption("勾選以啟用加碼單，可隨時修改價格與股數")
+    
+    add_on_data = []
     
     for i in range(1, 5):
-        if st.checkbox(f"✅ 激活加碼 {i}", key=f"check_{i}"):
-            c1, c2 = st.columns(2)
-            with c1:
-                add_price = st.number_input(f"加碼 {i} 價格", min_value=0.0, step=0.1, key=f"price_{i}")
-            with c2:
-                add_shares = st.number_input(f"加碼 {i} 股數", min_value=0, step=1000, key=f"shares_{i}")
-            
-            if init_price > 0 and add_price > 0:
-                # 計算距離母倉的 % 數
-                diff_pct = ((add_price - init_price) / init_price) * 100
-                st.caption(f"此筆加碼距離母倉價格: **{diff_pct:+.2f}%**")
+        # 使用 toggle (開關) 讓介面更現代
+        is_active = st.toggle(f"啟用加碼 {i}", key=f"toggle_{i}")
+        
+        if is_active:
+            col_p, col_s = st.columns(2)
+            with col_p:
+                a_price = st.number_input(f"加碼 {i} 價格", min_value=0.0, step=0.5, format="%.2f", key=f"price_{i}")
+            with col_s:
+                a_shares = st.number_input(f"加碼 {i} 股數", min_value=0, step=1000, key=f"shares_{i}")
                 
-                # 累加計算均價
-                total_cost += (add_price * add_shares)
-                total_shares += add_shares
+            if init_price > 0 and a_price > 0:
+                # 即時計算這筆加碼與母單的距離
+                diff_pct = ((a_price - init_price) / init_price) * 100
+                if diff_pct > 0:
+                    st.caption(f"📈 屬於右側加碼 (距離母單 +{diff_pct:.2f}%)")
+                else:
+                    st.caption(f"📉 屬於左側加碼 (距離母單 {diff_pct:.2f}%)")
+                    
+            add_on_data.append({'price': a_price, 'shares': a_shares})
 
-    # 顯示動態計算的總均價
-    if total_shares > 0:
-        avg_price = total_cost / total_shares
-        st.success(f"📊 目前總部位均價: **{avg_price:.2f}** (總股數: {total_shares})")
 
-with col2:
-    st.header("損益結算與績效分析")
+with col_dashboard:
+    st.header("2. 即時部位與風險總結")
     
-    # 6. 結算紀錄
-    with st.form("pnl_form"):
-        st.subheader("💰 新增結算紀錄")
-        f_date = st.date_input("結算日期", datetime.date.today())
-        f_type = st.selectbox("交易結果", ["停利出場", "停損出場", "保本出場"])
-        f_pnl = st.number_input("此筆交易總損益金額", step=1000)
-        submit_btn = st.form_submit_button("寫入績效資料庫")
+    # ================= 核心邏輯計算 =================
+    total_shares = init_shares
+    total_cost = init_price * init_shares
+    
+    for add_on in add_on_data:
+        total_shares += add_on['shares']
+        total_cost += (add_on['price'] * add_on['shares'])
         
-        if submit_btn:
-            new_record = pd.DataFrame([{
-                '日期': f_date, '股號': stock_input, '類型': f_type, '損益金額': f_pnl
-            }])
-            st.session_state.trade_history = pd.concat([st.session_state.trade_history, new_record], ignore_index=True)
-            st.success("紀錄新增成功！")
-
-    # 7. 自動計算總操作損益與繪製曲線圖
+    avg_price = total_cost / total_shares if total_shares > 0 else 0
+    
+    # 顯示整體部位狀態
+    st.info(f"### 📊 最新平均成本: **{avg_price:.2f}**")
+    
+    m1, m2 = st.columns(2)
+    m1.metric("總持股數", f"{total_shares:,} 股")
+    m2.metric("總投入本金", f"${total_cost:,.0f}")
+    
     st.markdown("---")
-    if not st.session_state.trade_history.empty:
-        df = st.session_state.trade_history.copy()
-        df['日期'] = pd.to_datetime(df['日期'])
-        df = df.sort_values('日期')
-        df['累積損益'] = df['損益金額'].cumsum()
+    
+    # ================= 嚴格停損位子計算 =================
+    st.subheader("🛡️ 動態風險與停損防線")
+    
+    if total_shares > 0 and init_price > 0:
+        # 計算一：如果維持「母單 -20%」作為極限停損點
+        loss_at_initial_sl = (initial_sl_price - avg_price) * total_shares
         
-        total_profit = df['損益金額'].sum()
-        st.metric(label="累積總損益", value=f"{total_profit:,.0f} 元")
+        # 計算二：如果改以「最新均價的 -20%」作為停損點
+        dynamic_sl_price = avg_price * 0.8
+        loss_at_dynamic_sl = (dynamic_sl_price - avg_price) * total_shares
         
-        # 繪製損益曲線圖
-        chart_type = st.radio("查看區間", ["每日", "每週", "每月", "自訂 (全部)"], horizontal=True)
+        st.error(f"**【策略 A】防守母單極限點位**")
+        st.write(f"若跌至母單停損價 **{initial_sl_price:.2f}** 全部出場：")
+        st.write(f"👉 預估總虧損金額：**{loss_at_initial_sl:,.0f}** 元")
         
-        if chart_type == "每日":
-            plot_df = df.set_index('日期').resample('D')['損益金額'].sum().cumsum().reset_index()
-        elif chart_type == "每週":
-            plot_df = df.set_index('日期').resample('W')['損益金額'].sum().cumsum().reset_index()
-        elif chart_type == "每月":
-            plot_df = df.set_index('日期').resample('M')['損益金額'].sum().cumsum().reset_index()
+        st.warning(f"**【策略 B】防守最新均價極限點位**")
+        st.write(f"若改以當前總部位均價的 -20% (**{dynamic_sl_price:.2f}**) 全部出場：")
+        st.write(f"👉 預估總虧損金額：**{loss_at_dynamic_sl:,.0f}** 元")
+        
+        # 進階：手動推演移動停損
+        st.markdown("##### 🔍 試算移動停損")
+        custom_sl = st.number_input("手動輸入預定停損/停利價 (試算結果)", value=float(initial_sl_price), step=0.5)
+        custom_pnl = (custom_sl - avg_price) * total_shares
+        
+        if custom_pnl > 0:
+            st.success(f"若在此價位出場，預估將 **獲利 {custom_pnl:,.0f}** 元")
         else:
-            plot_df = df
+            st.error(f"若在此價位出場，預估將 **虧損 {custom_pnl:,.0f}** 元")
             
-        if not plot_df.empty:
-            fig = px.line(plot_df, x='日期', y='累積損益', title=f"帳戶淨值曲線 ({chart_type})", markers=True)
-            fig.update_layout(xaxis_title="時間", yaxis_title="累積金額", hovermode="x unified")
-            st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("尚無結算紀錄，請在上方新增資料以產生圖表。")
+        st.write("請在左側輸入母單資料以啟動計算...")
