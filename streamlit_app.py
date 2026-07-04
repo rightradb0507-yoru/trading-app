@@ -4,18 +4,15 @@ import datetime
 import plotly.express as px
 from PIL import Image
 
-# 頁面基本設定
 st.set_page_config(page_title="實戰波段部位控管系統", layout="wide")
 st.title("📈 實戰波段部位即時控管儀表板")
 
-# ================= 1. 初始化資料庫 (Session State) =================
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = {}  # 存放盤中持倉 (字典格式：股號 -> 資料)
+    st.session_state.portfolio = {}
 if 'history' not in st.session_state:
     st.session_state.history = pd.DataFrame(columns=['日期', '股號', '類型', '損益金額'])
 
-# 建立三大分頁
-tab_new, tab_monitor, tab_history = st.tabs(["📝 1. 新增母單 (建倉)", "🖥️ 2. 盤中監控與動態加碼 (持倉)", "💰 3. 績效結算與曲線圖"])
+tab_new, tab_monitor, tab_history = st.tabs(["📝 1. 新增母單 (建倉)", "🖥️ 2. 盤中監控與動態加碼", "💰 3. 績效結算與修改"])
 
 # ================= 分頁 1：新增母單 =================
 with tab_new:
@@ -25,24 +22,30 @@ with tab_new:
     with col1:
         new_date = st.date_input("進場日期", datetime.date.today(), key="new_date")
         new_stock = st.text_input("🏷️ 股號 (必填)", placeholder="例如: 2330")
+        
+        st.markdown("##### 資金與股數設定")
+        new_capital = st.number_input("💰 母單預算資金 (元)", min_value=0, value=25000, step=1000)
         new_price = st.number_input("母單進場價格", min_value=0.0, step=0.5, format="%.2f")
-        new_shares = st.number_input("母單股數", min_value=0, step=1000)
+        
+        # 自動計算股數 (預算 / 股價)，若無價格則為 0
+        calc_shares = int(new_capital / new_price) if new_price > 0 else 0
+        new_shares = st.number_input("實際買進股數 (已自動試算)", min_value=0, value=calc_shares, step=1)
     
     with col2:
-        uploaded_file = st.file_uploader("📸 上傳進場位置截圖 (支援 Ctrl+V)", type=['png', 'jpg', 'jpeg'])
+        st.info("💡 提示：點擊下方虛線框框內任意處，即可使用 Ctrl+V 貼上截圖。")
+        uploaded_file = st.file_uploader("📸 上傳進場位置截圖", type=['png', 'jpg', 'jpeg'])
         if uploaded_file is not None:
             st.image(Image.open(uploaded_file), caption="進場截圖預覽", use_container_width=True)
             
     if st.button("💾 儲存母單並加入監控", type="primary"):
         if new_stock:
-            # 將資料存入 session_state
             st.session_state.portfolio[new_stock] = {
                 'date': new_date,
                 'price': new_price,
                 'shares': new_shares,
                 'image': uploaded_file,
-                # 預留加碼欄位
-                'addons': [{'active': False, 'price': 0.0, 'shares': 0} for _ in range(4)]
+                # 預留加碼欄位，新增 'capital' 屬性
+                'addons': [{'active': False, 'capital': 5000, 'price': 0.0, 'shares': 0} for _ in range(4)]
             }
             st.success(f"股號 {new_stock} 已成功加入盤中監控清單！")
         else:
@@ -54,14 +57,12 @@ with tab_monitor:
         st.info("目前沒有持倉紀錄。請先到「新增母單」建立部位。")
     else:
         st.header("盤中持倉動態控管")
-        # 選擇要監控的股票
         stock_list = list(st.session_state.portfolio.keys())
         selected_stock = st.selectbox("🔍 選擇要監控/編輯的持倉", stock_list)
         
         if selected_stock:
             trade_data = st.session_state.portfolio[selected_stock]
-            
-            c_left, c_right = st.columns([1, 1.2])
+            c_left, c_right = st.columns([1.2, 1])
             
             with c_left:
                 st.subheader("🔹 原始母單資訊")
@@ -76,20 +77,23 @@ with tab_monitor:
                 st.markdown("---")
                 st.subheader("🔸 加碼單動態設定")
                 
-                # 渲染 4 個加碼欄位，並綁定原本存好的資料
                 for i in range(4):
                     addon = trade_data['addons'][i]
                     is_active = st.toggle(f"啟用加碼 {i+1}", value=addon['active'], key=f"t_{selected_stock}_{i}")
                     
                     if is_active:
-                        col_p, col_s = st.columns(2)
+                        col_c, col_p, col_s = st.columns([1, 1, 1])
+                        with col_c:
+                            a_cap = st.number_input(f"預算資金", min_value=0, step=1000, value=addon['capital'], key=f"c_{selected_stock}_{i}")
                         with col_p:
                             a_price = st.number_input(f"價格", min_value=0.0, step=0.5, format="%.2f", value=float(addon['price']), key=f"p_{selected_stock}_{i}")
                         with col_s:
-                            a_shares = st.number_input(f"股數", min_value=0, step=1000, value=int(addon['shares']), key=f"s_{selected_stock}_{i}")
+                            calc_a_shares = int(a_cap / a_price) if a_price > 0 else 0
+                            # 為了不干擾手動輸入，若之前有存過股數就用存過的，否則用試算的
+                            default_shares = addon['shares'] if addon['shares'] > 0 else calc_a_shares
+                            a_shares = st.number_input(f"股數", min_value=0, step=1, value=default_shares, key=f"s_{selected_stock}_{i}")
                         
-                        # 即時更新存檔
-                        trade_data['addons'][i] = {'active': True, 'price': a_price, 'shares': a_shares}
+                        trade_data['addons'][i] = {'active': True, 'capital': a_cap, 'price': a_price, 'shares': a_shares}
                     else:
                         trade_data['addons'][i]['active'] = False
 
@@ -119,24 +123,21 @@ with tab_monitor:
                     st.write(f"若跌至 **{sl_price:.2f}** 全部出場，預估虧損：**{est_loss:,.0f}** 元")
                 
                 st.markdown("---")
-                # 平倉結算區
                 st.subheader("💰 部位平倉結算")
                 with st.form(key=f"close_form_{selected_stock}"):
                     close_type = st.selectbox("出場類型", ["停利出場", "停損出場", "保本出場"])
                     close_pnl = st.number_input("此筆交易總損益金額", step=1000)
                     if st.form_submit_button("出清部位並寫入績效"):
-                        # 寫入歷史紀錄
                         new_record = pd.DataFrame([{
                             '日期': datetime.date.today(), '股號': selected_stock, 
                             '類型': close_type, '損益金額': close_pnl
                         }])
                         st.session_state.history = pd.concat([st.session_state.history, new_record], ignore_index=True)
-                        # 從監控清單移除
                         del st.session_state.portfolio[selected_stock]
                         st.success(f"{selected_stock} 已結算！請切換分頁查看績效。")
                         st.rerun()
 
-# ================= 分頁 3：績效結算與曲線圖 =================
+# ================= 分頁 3：績效結算與修改 =================
 with tab_history:
     st.header("歷史績效與成長曲線")
     if not st.session_state.history.empty:
@@ -152,7 +153,17 @@ with tab_history:
         fig.update_layout(xaxis_title="結算時間", yaxis_title="累積金額", hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
         
-        st.subheader("交易明細")
-        st.dataframe(df, use_container_width=True)
+        st.subheader("交易明細 (可直接點擊表格修改或刪除)")
+        st.info("💡 提示：點擊數字可直接修改。選取最左側核取方塊後，按下 Delete 鍵即可刪除該筆資料。")
+        
+        # 使用動態表格 (Data Editor) 取代靜態表格，並即時寫回資料庫
+        edited_df = st.data_editor(
+            st.session_state.history,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="history_editor"
+        )
+        st.session_state.history = edited_df
+
     else:
-        st.info("尚無結算紀錄。當你在「盤中監控」將部位出清後，圖表就會在此產生。")
+        st.info("尚無結算紀錄。當你在「盤中監控」將部位出清後，資料就會在此產生。")
