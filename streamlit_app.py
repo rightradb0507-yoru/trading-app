@@ -5,19 +5,25 @@ import plotly.express as px
 from PIL import Image
 import requests
 
-# 1. E3dadat el saf7a (Page Setup)
+# 1. 頁面基本設定
 st.set_page_config(page_title="實戰波段部位控管系統", layout="wide")
 st.title("📈 實戰波段部位即時控管儀表板")
 
-# 2. Ma3loumat el rabt b Airtable (Airtable Credentials)
+# 2. Airtable 連線憑證
 AIRTABLE_PAT = "patNvk9pkE2vY8uCh.224e2d113ee94d2f505d3149a7d0c496102267aef209975ef47d425eef07d6ef"
-# ⚠️ HENA: Ektdb el Base ID bta3ak hna (Write your Base ID here)
 BASE_ID = "appQ7xRHJ03llVlm1" 
 TABLE_NAME = "History"
 
-# 3. Dawaal el ta3amol ma3 Airtable (Airtable Functions)
+# ================= 側邊欄：使用者切換 =================
+st.sidebar.title("👤 使用者設定")
+st.sidebar.info("請先確認目前操作者，系統會自動隔離雙方的部位與績效。")
+current_user = st.sidebar.radio("目前操作者：", ["yoru", "bear"])
+
+st.sidebar.markdown("---")
+st.sidebar.write(f"🟢 系統目前工作區：**{current_user}**")
+
+# 3. Airtable 讀寫功能 (新增了「使用者」欄位)
 def fetch_airtable_data():
-    # Geeb el bayanat men Airtable (Fetch data)
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
     headers = {"Authorization": f"Bearer {AIRTABLE_PAT}"}
     try:
@@ -29,18 +35,18 @@ def fetch_airtable_data():
                 fields = r.get('fields', {})
                 data.append({
                     '日期': fields.get('日期', ''),
+                    '使用者': fields.get('使用者', ''),  # 抓取使用者
                     '股號': fields.get('股號', ''),
                     '類型': fields.get('類型', ''),
                     '損益金額': fields.get('損益金額', 0)
                 })
             return pd.DataFrame(data)
         else:
-            return pd.DataFrame(columns=['日期', '股號', '類型', '損益金額'])
+            return pd.DataFrame(columns=['日期', '使用者', '股號', '類型', '損益金額'])
     except Exception:
-        return pd.DataFrame(columns=['日期', '股號', '類型', '損益金額'])
+        return pd.DataFrame(columns=['日期', '使用者', '股號', '類型', '損益金額'])
 
-def add_airtable_record(date_str, stock, close_type, pnl):
-    # Def segel gedid fi Airtable (Add new record)
+def add_airtable_record(date_str, user, stock, close_type, pnl):
     url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
     headers = {
         "Authorization": f"Bearer {AIRTABLE_PAT}",
@@ -50,6 +56,7 @@ def add_airtable_record(date_str, stock, close_type, pnl):
         "records": [{
             "fields": {
                 "日期": str(date_str),
+                "使用者": str(user),  # 寫入使用者
                 "股號": str(stock),
                 "類型": str(close_type),
                 "損益金額": float(pnl)
@@ -58,23 +65,23 @@ def add_airtable_record(date_str, stock, close_type, pnl):
     }
     requests.post(url, headers=headers, json=data)
 
-# 4. 7ifz el state (State management)
+# 4. 暫存狀態管理 (隔離 yoru 和 bear 的盤中部位)
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = {}
+    st.session_state.portfolio = {"yoru": {}, "bear": {}}
     
 if 'history' not in st.session_state or st.session_state.get('refresh_history', True):
-    if BASE_ID != "請在這裡填入你的_app_開頭的BaseID":
-        st.session_state.history = fetch_airtable_data()
-        st.session_state.refresh_history = False
-    else:
-        st.session_state.history = pd.DataFrame(columns=['日期', '股號', '類型', '損益金額'])
+    st.session_state.history = fetch_airtable_data()
+    st.session_state.refresh_history = False
 
-# 5. Tarteeb el tabs (Tabs Setup)
+# 取得當前使用者的盤中部位
+user_portfolio = st.session_state.portfolio[current_user]
+
+# 5. 介面分頁設定
 tab_new, tab_monitor, tab_history = st.tabs(["📝 1. 新增母單 (建倉)", "🖥️ 2. 盤中監控與動態加碼", "💰 3. 雲端績效結算與曲線圖"])
 
-# ================= Tab 1: Gedid (New Order) =================
+# ================= 分頁 1: 新增母單 =================
 with tab_new:
-    st.header("建立新部位")
+    st.header(f"建立新部位 ({current_user} 的工作區)")
     col1, col2 = st.columns(2)
     
     with col1:
@@ -96,28 +103,28 @@ with tab_new:
             
     if st.button("💾 儲存母單並加入監控", type="primary"):
         if new_stock:
-            st.session_state.portfolio[new_stock] = {
+            user_portfolio[new_stock] = {
                 'date': new_date,
                 'price': new_price,
                 'shares': new_shares,
                 'image': uploaded_file,
                 'addons': [{'active': False, 'capital': 5000, 'price': 0.0, 'shares': 0} for _ in range(4)]
             }
-            st.success(f"股號 {new_stock} 已成功加入盤中監控清單！")
+            st.success(f"股號 {new_stock} 已成功加入 {current_user} 的盤中監控清單！")
         else:
             st.error("請輸入股號！")
 
-# ================= Tab 2: Monitor =================
+# ================= 分頁 2: 盤中監控 =================
 with tab_monitor:
-    if not st.session_state.portfolio:
-        st.info("目前沒有持倉紀錄。請先到「新增母單」建立部位。")
+    if not user_portfolio:
+        st.info(f"目前 {current_user} 沒有持倉紀錄。請先到「新增母單」建立部位。")
     else:
-        st.header("盤中持倉動態控管")
-        stock_list = list(st.session_state.portfolio.keys())
+        st.header(f"盤中持倉動態控管 ({current_user})")
+        stock_list = list(user_portfolio.keys())
         selected_stock = st.selectbox("🔍 選擇要監控/編輯的持倉", stock_list)
         
         if selected_stock:
-            trade_data = st.session_state.portfolio[selected_stock]
+            trade_data = user_portfolio[selected_stock]
             c_left, c_right = st.columns([1.2, 1])
             
             with c_left:
@@ -135,18 +142,18 @@ with tab_monitor:
                 
                 for i in range(4):
                     addon = trade_data['addons'][i]
-                    is_active = st.toggle(f"啟用加碼 {i+1}", value=addon['active'], key=f"t_{selected_stock}_{i}")
+                    is_active = st.toggle(f"啟用加碼 {i+1}", value=addon['active'], key=f"t_{current_user}_{selected_stock}_{i}")
                     
                     if is_active:
                         col_c, col_p, col_s = st.columns([1, 1, 1])
                         with col_c:
-                            a_cap = st.number_input(f"預算資金", min_value=0, step=1000, value=addon['capital'], key=f"c_{selected_stock}_{i}")
+                            a_cap = st.number_input(f"預算資金", min_value=0, step=1000, value=addon['capital'], key=f"c_{current_user}_{selected_stock}_{i}")
                         with col_p:
-                            a_price = st.number_input(f"價格", min_value=0.0, step=0.5, format="%.2f", value=float(addon['price']), key=f"p_{selected_stock}_{i}")
+                            a_price = st.number_input(f"價格", min_value=0.0, step=0.5, format="%.2f", value=float(addon['price']), key=f"p_{current_user}_{selected_stock}_{i}")
                         with col_s:
                             calc_a_shares = int(a_cap / a_price) if a_price > 0 else 0
                             default_shares = addon['shares'] if addon['shares'] > 0 else calc_a_shares
-                            a_shares = st.number_input(f"股數", min_value=0, step=1, value=default_shares, key=f"s_{selected_stock}_{i}")
+                            a_shares = st.number_input(f"股數", min_value=0, step=1, value=default_shares, key=f"s_{current_user}_{selected_stock}_{i}")
                         
                         trade_data['addons'][i] = {'active': True, 'capital': a_cap, 'price': a_price, 'shares': a_shares}
                     else:
@@ -179,43 +186,46 @@ with tab_monitor:
                 
                 st.markdown("---")
                 st.subheader("💰 部位平倉結算")
-                with st.form(key=f"close_form_{selected_stock}"):
+                with st.form(key=f"close_form_{current_user}_{selected_stock}"):
                     close_type = st.selectbox("出場類型", ["停利出場", "停損出場", "保本出場"])
                     close_pnl = st.number_input("此筆交易總損益金額", step=1000)
                     
-                    # Zrar el tasgel (Submit button)
-                    if st.form_submit_button("出清部位並寫入雲端績效"):
-                        if BASE_ID == "請在這裡填入你的_app_開頭的BaseID":
-                            st.error("⚠️ 請先在程式碼上方填入你的 Airtable Base ID，才能連線寫入雲端！")
-                        else:
-                            add_airtable_record(datetime.date.today(), selected_stock, close_type, close_pnl)
-                            st.session_state.refresh_history = True
-                            del st.session_state.portfolio[selected_stock]
-                            st.success(f"{selected_stock} 已結算並永久同步至 Airtable 雲端！請切換分頁查看。")
-                            st.rerun()
+                    if st.form_submit_button(f"出清部位並寫入 {current_user} 的績效"):
+                        # 寫入 Airtable 時多傳遞了 user 參數
+                        add_airtable_record(datetime.date.today(), current_user, selected_stock, close_type, close_pnl)
+                        st.session_state.refresh_history = True
+                        del user_portfolio[selected_stock]
+                        st.success(f"{selected_stock} 已結算！已同步至 {current_user} 的專屬雲端紀錄。")
+                        st.rerun()
 
-# ================= Tab 3: History =================
+# ================= 分頁 3: 歷史紀錄 =================
 with tab_history:
-    st.header("雲端歷史績效與成長曲線")
-    if BASE_ID == "請在這裡填入你的_app_開頭的BaseID":
-        st.warning("⚠️ 系統尚未連線。請先在程式碼填入 Base ID 以讀取雲端資料。")
+    st.header(f"雲端歷史績效與成長曲線 ({current_user})")
         
-    elif not st.session_state.history.empty:
-        df = st.session_state.history.copy()
-        df['日期'] = pd.to_datetime(df['日期'], errors='coerce')
-        df['損益金額'] = pd.to_numeric(df['損益金額'], errors='coerce').fillna(0)
-        df = df.sort_values('日期')
-        df['累積損益'] = df['損益金額'].cumsum()
+    df = st.session_state.history.copy()
+    
+    # 只過濾出當前使用者的資料
+    if not df.empty and '使用者' in df.columns:
+        user_df = df[df['使用者'] == current_user].copy()
+    else:
+        user_df = pd.DataFrame()
         
-        total_profit = df['損益金額'].sum()
-        st.metric(label="累積總損益", value=f"{total_profit:,.0f} 元")
+    if not user_df.empty:
+        user_df['日期'] = pd.to_datetime(user_df['日期'], errors='coerce')
+        user_df['損益金額'] = pd.to_numeric(user_df['損益金額'], errors='coerce').fillna(0)
+        user_df = user_df.sort_values('日期')
+        user_df['累積損益'] = user_df['損益金額'].cumsum()
         
-        fig = px.line(df, x='日期', y='累積損益', title="帳戶淨值曲線 (雲端同步)", markers=True)
+        total_profit = user_df['損益金額'].sum()
+        st.metric(label=f"{current_user} 累積總損益", value=f"{total_profit:,.0f} 元")
+        
+        fig = px.line(user_df, x='日期', y='累積損益', title=f"{current_user} 的帳戶淨值曲線", markers=True)
         fig.update_layout(xaxis_title="結算時間", yaxis_title="累積金額", hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
         
         st.subheader("交易明細 (已同步至 Airtable)")
-        st.info("💡 提示：你的資料已經永久儲存在 Airtable 雲端。如需修改或刪除，請直接前往你的 Airtable 表格操作，APP 重新整理後就會顯示最新狀態！")
-        st.dataframe(df, use_container_width=True)
+        # 隱藏使用者欄位，因為已經是專屬畫面了
+        display_df = user_df.drop(columns=['使用者']) if '使用者' in user_df.columns else user_df
+        st.dataframe(display_df, use_container_width=True)
     else:
-        st.info("雲端資料庫目前尚無結算紀錄。當你在「盤中監控」將部位出清後，資料就會永久寫入並在此產生。")
+        st.info(f"目前 {current_user} 尚無結算紀錄。當部位出清後，專屬資料就會在此產生。")
