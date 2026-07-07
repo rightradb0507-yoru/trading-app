@@ -3,18 +3,76 @@ import pandas as pd
 import datetime
 import plotly.express as px
 from PIL import Image
+import requests
 
+# 1. E3dadat el saf7a (Page Setup)
 st.set_page_config(page_title="實戰波段部位控管系統", layout="wide")
 st.title("📈 實戰波段部位即時控管儀表板")
 
+# 2. Ma3loumat el rabt b Airtable (Airtable Credentials)
+AIRTABLE_PAT = "patNvk9pkE2vY8uCh.224e2d113ee94d2f505d3149a7d0c496102267aef209975ef47d425eef07d6ef"
+# ⚠️ HENA: Ektdb el Base ID bta3ak hna (Write your Base ID here)
+BASE_ID = "appQ7xRHJ03llVlm1" 
+TABLE_NAME = "History"
+
+# 3. Dawaal el ta3amol ma3 Airtable (Airtable Functions)
+def fetch_airtable_data():
+    # Geeb el bayanat men Airtable (Fetch data)
+    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
+    headers = {"Authorization": f"Bearer {AIRTABLE_PAT}"}
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            records = response.json().get('records', [])
+            data = []
+            for r in records:
+                fields = r.get('fields', {})
+                data.append({
+                    '日期': fields.get('日期', ''),
+                    '股號': fields.get('股號', ''),
+                    '類型': fields.get('類型', ''),
+                    '損益金額': fields.get('損益金額', 0)
+                })
+            return pd.DataFrame(data)
+        else:
+            return pd.DataFrame(columns=['日期', '股號', '類型', '損益金額'])
+    except Exception:
+        return pd.DataFrame(columns=['日期', '股號', '類型', '損益金額'])
+
+def add_airtable_record(date_str, stock, close_type, pnl):
+    # Def segel gedid fi Airtable (Add new record)
+    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_PAT}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "records": [{
+            "fields": {
+                "日期": str(date_str),
+                "股號": str(stock),
+                "類型": str(close_type),
+                "損益金額": float(pnl)
+            }
+        }]
+    }
+    requests.post(url, headers=headers, json=data)
+
+# 4. 7ifz el state (State management)
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = {}
-if 'history' not in st.session_state:
-    st.session_state.history = pd.DataFrame(columns=['日期', '股號', '類型', '損益金額'])
+    
+if 'history' not in st.session_state or st.session_state.get('refresh_history', True):
+    if BASE_ID != "請在這裡填入你的_app_開頭的BaseID":
+        st.session_state.history = fetch_airtable_data()
+        st.session_state.refresh_history = False
+    else:
+        st.session_state.history = pd.DataFrame(columns=['日期', '股號', '類型', '損益金額'])
 
-tab_new, tab_monitor, tab_history = st.tabs(["📝 1. 新增母單 (建倉)", "🖥️ 2. 盤中監控與動態加碼", "💰 3. 績效結算與修改"])
+# 5. Tarteeb el tabs (Tabs Setup)
+tab_new, tab_monitor, tab_history = st.tabs(["📝 1. 新增母單 (建倉)", "🖥️ 2. 盤中監控與動態加碼", "💰 3. 雲端績效結算與曲線圖"])
 
-# ================= 分頁 1：新增母單 =================
+# ================= Tab 1: Gedid (New Order) =================
 with tab_new:
     st.header("建立新部位")
     col1, col2 = st.columns(2)
@@ -27,7 +85,6 @@ with tab_new:
         new_capital = st.number_input("💰 母單預算資金 (元)", min_value=0, value=25000, step=1000)
         new_price = st.number_input("母單進場價格", min_value=0.0, step=0.5, format="%.2f")
         
-        # 自動計算股數 (預算 / 股價)，若無價格則為 0
         calc_shares = int(new_capital / new_price) if new_price > 0 else 0
         new_shares = st.number_input("實際買進股數 (已自動試算)", min_value=0, value=calc_shares, step=1)
     
@@ -44,14 +101,13 @@ with tab_new:
                 'price': new_price,
                 'shares': new_shares,
                 'image': uploaded_file,
-                # 預留加碼欄位，新增 'capital' 屬性
                 'addons': [{'active': False, 'capital': 5000, 'price': 0.0, 'shares': 0} for _ in range(4)]
             }
             st.success(f"股號 {new_stock} 已成功加入盤中監控清單！")
         else:
             st.error("請輸入股號！")
 
-# ================= 分頁 2：盤中監控與動態加碼 =================
+# ================= Tab 2: Monitor =================
 with tab_monitor:
     if not st.session_state.portfolio:
         st.info("目前沒有持倉紀錄。請先到「新增母單」建立部位。")
@@ -89,7 +145,6 @@ with tab_monitor:
                             a_price = st.number_input(f"價格", min_value=0.0, step=0.5, format="%.2f", value=float(addon['price']), key=f"p_{selected_stock}_{i}")
                         with col_s:
                             calc_a_shares = int(a_cap / a_price) if a_price > 0 else 0
-                            # 為了不干擾手動輸入，若之前有存過股數就用存過的，否則用試算的
                             default_shares = addon['shares'] if addon['shares'] > 0 else calc_a_shares
                             a_shares = st.number_input(f"股數", min_value=0, step=1, value=default_shares, key=f"s_{selected_stock}_{i}")
                         
@@ -127,43 +182,40 @@ with tab_monitor:
                 with st.form(key=f"close_form_{selected_stock}"):
                     close_type = st.selectbox("出場類型", ["停利出場", "停損出場", "保本出場"])
                     close_pnl = st.number_input("此筆交易總損益金額", step=1000)
-                    if st.form_submit_button("出清部位並寫入績效"):
-                        new_record = pd.DataFrame([{
-                            '日期': datetime.date.today(), '股號': selected_stock, 
-                            '類型': close_type, '損益金額': close_pnl
-                        }])
-                        st.session_state.history = pd.concat([st.session_state.history, new_record], ignore_index=True)
-                        del st.session_state.portfolio[selected_stock]
-                        st.success(f"{selected_stock} 已結算！請切換分頁查看績效。")
-                        st.rerun()
+                    
+                    # Zrar el tasgel (Submit button)
+                    if st.form_submit_button("出清部位並寫入雲端績效"):
+                        if BASE_ID == "請在這裡填入你的_app_開頭的BaseID":
+                            st.error("⚠️ 請先在程式碼上方填入你的 Airtable Base ID，才能連線寫入雲端！")
+                        else:
+                            add_airtable_record(datetime.date.today(), selected_stock, close_type, close_pnl)
+                            st.session_state.refresh_history = True
+                            del st.session_state.portfolio[selected_stock]
+                            st.success(f"{selected_stock} 已結算並永久同步至 Airtable 雲端！請切換分頁查看。")
+                            st.rerun()
 
-# ================= 分頁 3：績效結算與修改 =================
+# ================= Tab 3: History =================
 with tab_history:
-    st.header("歷史績效與成長曲線")
-    if not st.session_state.history.empty:
+    st.header("雲端歷史績效與成長曲線")
+    if BASE_ID == "請在這裡填入你的_app_開頭的BaseID":
+        st.warning("⚠️ 系統尚未連線。請先在程式碼填入 Base ID 以讀取雲端資料。")
+        
+    elif not st.session_state.history.empty:
         df = st.session_state.history.copy()
-        df['日期'] = pd.to_datetime(df['日期'])
+        df['日期'] = pd.to_datetime(df['日期'], errors='coerce')
+        df['損益金額'] = pd.to_numeric(df['損益金額'], errors='coerce').fillna(0)
         df = df.sort_values('日期')
         df['累積損益'] = df['損益金額'].cumsum()
         
         total_profit = df['損益金額'].sum()
         st.metric(label="累積總損益", value=f"{total_profit:,.0f} 元")
         
-        fig = px.line(df, x='日期', y='累積損益', title="帳戶淨值曲線", markers=True)
+        fig = px.line(df, x='日期', y='累積損益', title="帳戶淨值曲線 (雲端同步)", markers=True)
         fig.update_layout(xaxis_title="結算時間", yaxis_title="累積金額", hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
         
-        st.subheader("交易明細 (可直接點擊表格修改或刪除)")
-        st.info("💡 提示：點擊數字可直接修改。選取最左側核取方塊後，按下 Delete 鍵即可刪除該筆資料。")
-        
-        # 使用動態表格 (Data Editor) 取代靜態表格，並即時寫回資料庫
-        edited_df = st.data_editor(
-            st.session_state.history,
-            num_rows="dynamic",
-            use_container_width=True,
-            key="history_editor"
-        )
-        st.session_state.history = edited_df
-
+        st.subheader("交易明細 (已同步至 Airtable)")
+        st.info("💡 提示：你的資料已經永久儲存在 Airtable 雲端。如需修改或刪除，請直接前往你的 Airtable 表格操作，APP 重新整理後就會顯示最新狀態！")
+        st.dataframe(df, use_container_width=True)
     else:
-        st.info("尚無結算紀錄。當你在「盤中監控」將部位出清後，資料就會在此產生。")
+        st.info("雲端資料庫目前尚無結算紀錄。當你在「盤中監控」將部位出清後，資料就會永久寫入並在此產生。")
