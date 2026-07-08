@@ -89,27 +89,27 @@ def sync_portfolio_to_cloud(user, stock, trade_data):
                     "股號": str(stock),
                     "使用者": str(user),
                     "資料包": data_str
-                }
-            }]
-        }
-        res = requests.post(url, headers=headers, json=data)
-        if res.status_code == 200:
-            new_id = res.json()['records'][0]['id']
-            st.session_state.portfolio[user][stock]['record_id'] = new_id
-
-def delete_portfolio_from_cloud(record_id):
-    if record_id:
-        url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_PORTFOLIO}/{record_id}"
-        headers = {"Authorization": f"Bearer {AIRTABLE_PAT}"}
-        requests.delete(url, headers=headers)
-
-# 4. 暫存狀態管理 (隔離 yoru 和 bear 的盤中部位)
-if 'portfolio' not in st.session_state or st.session_state.get('refresh_portfolio', True):
-    st.session_state.portfolio = load_portfolio_from_cloud()
-    st.session_state.refresh_portfolio = False
+# ================= 分頁 1: 新增母單 =================
+with tab_new:
+    st.header(f"建立新部位 ({current_user} 的工作區)")
+    col1, col2 = st.columns(2)
     
-if 'history' not in st.session_state or st.session_state.get('refresh_history', True):
-# ... existing code ...
+    with col1:
+        new_date = st.date_input("進場日期", datetime.date.today(), key="new_date")
+        new_stock = st.text_input("🏷️ 股號 (必填)", placeholder="例如: 2330")
+        
+        st.markdown("##### 資金與股數設定")
+        new_capital = st.number_input("💰 母單預算資金 (元)", min_value=0, value=25000, step=1000)
+        new_price = st.number_input("母單進場價格", min_value=0.0, step=0.5, format="%.2f")
+        
+        calc_shares = int(new_capital / new_price) if new_price > 0 else 0
+        st.caption(f"💡 系統試算：依此價格與資金，最多可買 **{calc_shares:,}** 股")
+        new_shares = st.number_input("實際買進股數", min_value=0, value=calc_shares, step=1, key="new_sha")
+    
+    with col2:
+        st.info("💡 提示：因瀏覽器安全限制無法直接 Ctrl+V。請使用截圖軟體後，直接「拖曳」圖片到下方虛線框，或先存檔再上傳。")
+        uploaded_file = st.file_uploader("📸 上傳進場位置截圖", type=['png', 'jpg', 'jpeg'])
+        if uploaded_file is not None:
             st.image(Image.open(uploaded_file), caption="進場截圖預覽", use_container_width=True)
             
     if st.button("💾 儲存母單並加入監控", type="primary"):
