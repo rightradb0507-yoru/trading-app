@@ -18,7 +18,7 @@ TABLE_PORTFOLIO = "Portfolio"
 
 # ================= 側邊欄：使用者切換 =================
 # ... existing code ...
-    data = {
+data = {
         "records": [{
             "fields": {
                 "日期": str(date_str),
