@@ -9,7 +9,6 @@ import json
 st.set_page_config(page_title="實戰波段部位控管系統", layout="wide")
 st.title("📈 實戰波段部位即時控管儀表板")
 
-# 2. Airtable 連線憑證
 AIRTABLE_PAT = "patNvk9pkE2vY8uCh.224e2d113ee94d2f505d3149a7d0c496102267aef209975ef47d425eef07d6ef"
 BASE_ID = "appQ7xRHJ03llVlm1" 
 TABLE_NAME = "History"
@@ -84,12 +83,12 @@ def load_portfolio_from_cloud():
                         portfolio[user] = {}
                     try:
                         data_dict = json.loads(data_str)
-                        data_dict['record_id'] = rec_id # 記錄 Airtable 的專屬 ID
-                        data_dict['image'] = None # 雲端不存圖片
+                        data_dict['record_id'] = rec_id
+                        data_dict['image'] = None
                         portfolio[user][stock] = data_dict
-                    except:
+                    except Exception:
                         pass
-    except:
+    except Exception:
         pass
     return portfolio
 
@@ -99,7 +98,6 @@ def sync_portfolio_to_cloud(user, stock, trade_data):
         "Content-Type": "application/json"
     }
     
-    # 將數據打包成 JSON 字串 (排除圖片以節省空間)
     save_data = {
         'date': str(trade_data['date']),
         'price': float(trade_data['price']),
@@ -109,11 +107,11 @@ def sync_portfolio_to_cloud(user, stock, trade_data):
     data_str = json.dumps(save_data)
     record_id = trade_data.get('record_id')
     
-    if record_id: # 雲端已有紀錄 -> 更新
+    if record_id:
         url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_PORTFOLIO}/{record_id}"
         data = {"fields": {"資料包": data_str}}
         requests.patch(url, headers=headers, json=data)
-    else: # 雲端無紀錄 -> 新增
+    else:
         url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_PORTFOLIO}"
         data = {
             "records": [{
@@ -127,10 +125,9 @@ def sync_portfolio_to_cloud(user, stock, trade_data):
         response = requests.post(url, headers=headers, json=data)
         if response.status_code == 200:
             try:
-                # 把剛建立的 record_id 存回記憶體，下次才會是更新
                 new_id = response.json()['records'][0]['id']
                 trade_data['record_id'] = new_id
-            except:
+            except Exception:
                 pass
 
 def delete_portfolio_from_cloud(record_id):
@@ -147,12 +144,10 @@ if 'history' not in st.session_state or st.session_state.get('refresh_history', 
     st.session_state.history = fetch_airtable_data()
     st.session_state.refresh_history = False
 
-# 取得當前使用者的盤中部位
 if current_user not in st.session_state.portfolio:
     st.session_state.portfolio[current_user] = {}
 user_portfolio = st.session_state.portfolio[current_user]
 
-# 5. 介面分頁設定
 tab_new, tab_monitor, tab_history = st.tabs(["📝 1. 新增母單 (建倉)", "🖥️ 2. 盤中監控與動態加碼", "💰 3. 雲端績效結算與曲線圖"])
 
 with tab_new:
@@ -214,7 +209,7 @@ with tab_monitor:
                     with st.expander("展開查看進場截圖"):
                         try:
                             st.image(Image.open(trade_data['image']), use_container_width=True)
-                        except:
+                        except Exception:
                             st.write("圖片無法載入 (網頁重整後暫存圖片會消失，但數據已存於雲端)")
                 
                 st.markdown("---")
@@ -232,7 +227,6 @@ with tab_monitor:
                             a_price = st.number_input(f"價格", min_value=0.0, step=0.5, format="%.2f", value=float(addon['price']), key=f"p_{current_user}_{selected_stock}_{i}")
                         with col_s:
                             calc_a_shares = int(a_cap / a_price) if a_price > 0 else 0
-                            # 如果使用者沒改過股數，就預設帶入系統算好的
                             default_shares = addon['shares'] if addon['shares'] > 0 else calc_a_shares
                             a_shares = st.number_input(f"股數", min_value=0, step=1, value=default_shares, key=f"s_{current_user}_{selected_stock}_{i}")
                         
@@ -264,7 +258,6 @@ with tab_monitor:
                 m2.metric("總投入本金", f"${total_cost:,.0f}")
                 
                 st.markdown("---")
-                # 動態極限防守：母單價格 -20%
                 mother_price = trade_data['price']
                 if mother_price > 0 and total_shares > 0:
                     mother_sl_price = mother_price * 0.8
@@ -288,13 +281,10 @@ with tab_monitor:
                 st.subheader("💰 部位平倉結算")
                 with st.form(key=f"close_form_{current_user}_{selected_stock}"):
                     close_type = st.selectbox("出場類型", ["停利出場", "停損出場", "保本出場"])
-                    # 自動帶入上方試算出來的損益金額
                     close_pnl = st.number_input("此筆交易總損益金額", value=float(est_profit), step=1000.0)
                     
                     if st.form_submit_button(f"出清部位並寫入 {current_user} 的績效"):
-                        # 寫入歷史紀錄
                         add_airtable_record(datetime.date.today(), current_user, selected_stock, close_type, close_pnl)
-                        # 從雲端盤中監控刪除
                         rec_id = trade_data.get('record_id')
                         delete_portfolio_from_cloud(rec_id)
                         
