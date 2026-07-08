@@ -12,13 +12,13 @@ st.title("📈 實戰波段部位即時控管儀表板")
 
 # 2. Airtable 連線憑證
 AIRTABLE_PAT = "patNvk9pkE2vY8uCh.224e2d113ee94d2f505d3149a7d0c496102267aef209975ef47d425eef07d6ef"
-BASE_ID = "appQ7xRHJ03llVlm1" 
-TABLE_NAME = "History"
-TABLE_PORTFOLIO = "Portfolio"
-
-# ================= 側邊欄：使用者切換 =================
-# ... existing code ...
-data = {
+def add_airtable_record(date_str, user, stock, close_type, pnl):
+    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}"
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_PAT}",
+        "Content-Type": "application/json"
+    }
+    data = {
         "records": [{
             "fields": {
                 "日期": str(date_str),
